@@ -1,0 +1,5 @@
+aio-binance-library
+asyncpg
+flake8
+flake8-bugbear
+pep8-naming
