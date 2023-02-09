@@ -1,26 +1,46 @@
 import asyncio
 import asyncpg
 import datetime
-# from time import sleep
 from aio_binance.futures.usdt import WsClient
 
 
 SYMBOL = 'XRPUSDT'
+
+# Запрос в БД для вставки новой строки с данными
 db_insert = '''
                 INSERT INTO crypto_monitor(pair_name, time, price)
                 VALUES($1, $2, $3)
             '''
 
+# Запрос в БД для получения максимального значения цены
+# в скользящем интервале который равен 1 часу.
+db_max_price_1h = '''
+                    SELECT MAX(price) FROM crypto_monitor
+                    WHERE time > current_timestamp - interval '1' hour
+                  '''
+
 # С параметрами для БД через переменные среды почему-то
 # не захотело работать, поэтому пропишем руками ниже
 HOST = 'localhost'
-DATABASE = 'crypto_test'
+DATABASE = 'crypto_monitor'
 USER = 'postgres'
 PASSWORD = 'changeme'
 
+max_price_1h_roll_window: float = 0
 
-async def connect_create_if_not_exists(host, user, password, database,
-                                       port=5432,):
+# Наше целевое значение процента при котором будет выведено сообщение
+percent: float = 1
+# Добавим шаг изменения процента для вывода сообщения в консоли
+percent_step: float = 1
+
+# Коды для изменения цвета сообщений в консоли
+RED_TEXT = '\033[91m'
+END_COLOR = '\033[0m'
+BLUE_TEXT = '\033[94m'
+
+
+async def db_connect_create_if_not_exists(host, user, password, database,
+                                          port=5432,):
     try:
         conn = await asyncpg.connect(
                 host=host, user=user, password=password,
@@ -67,37 +87,52 @@ async def make_db_pool():
 async def make_db_request():
     # Wait for websocket connection
     await asyncio.sleep(5)
+    global max_price_1h_roll_window
     while True:
         if event:
-            time = datetime.datetime.fromtimestamp(int(event.get('E')) / 1000)
+            time = datetime.datetime.now()
             await db_pool.fetch(db_insert, SYMBOL, time, float(event.get('p')))
-            print('\nCREATE A NEW ROW IN DB\n')
+            # print('\nCREATE A NEW ROW IN DB\n')
+        max_price_1h_roll_window = await db_pool.fetchval(db_max_price_1h)
         await asyncio.sleep(1)
 
 
-async def event_kline(data: dict):
-    print(data)
-    await asyncio.sleep(5)
-
-
 async def event_agg_trade(data: dict):
-    print(data)
+    global max_price_1h_roll_window, percent, percent_step
+    curr_price = float(data['p'])
+    if curr_price > max_price_1h_roll_window:
+        max_price_1h_roll_window = curr_price
+    price_delta = float(100 - (curr_price / max_price_1h_roll_window * 100))
+    if price_delta >= percent:
+        print(RED_TEXT + f'{datetime.datetime.now()} - '
+              f'Цена фьючерса {SYMBOL} снизилась за последний час '
+              f'от максимального значения на {round(price_delta, 2)} %'
+              + END_COLOR)
+        percent += percent_step
+    elif price_delta < percent - percent_step:
+        percent -= percent_step
 
 
 async def adapter_event(data: dict):
     global event
     event = data
-    # if event == 'kline':
-    #     await event_kline(data)
     if event.get('e') == 'aggTrade':
         await event_agg_trade(data)
-        # await make_db_request(data=data)
-    # else:
-    #     print(data)
+
+
+async def wait_low_price():
+    await asyncio.sleep(5)
+    while True:
+        print(f'\n{datetime.datetime.now()} '
+              f'- Current max price in rolling 1h window ' +
+              BLUE_TEXT + f'- {max_price_1h_roll_window}\n' + END_COLOR)
+        print(f'{datetime.datetime.now()} '
+              f'- Waiting for {round(percent, 2)}% price changing...')
+        await asyncio.sleep(5)
 
 
 async def main():
-    await connect_create_if_not_exists(
+    await db_connect_create_if_not_exists(
                 host=HOST,
                 database=DATABASE,
                 user=USER,
@@ -113,6 +148,8 @@ async def main():
         asyncio.create_task(
             make_db_request()
         ),
+        asyncio.create_task(
+            wait_low_price()),
     ]
     await asyncio.gather(*tasks)
 
