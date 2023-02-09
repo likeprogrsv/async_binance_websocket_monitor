@@ -2,6 +2,7 @@ import asyncio
 import asyncpg
 import datetime
 from aio_binance.futures.usdt import WsClient
+import os
 
 
 SYMBOL = 'XRPUSDT'
@@ -21,10 +22,10 @@ db_max_price_1h = '''
 
 # С параметрами для БД через переменные среды почему-то
 # не захотело работать, поэтому пропишем руками ниже
-HOST = 'localhost'
-DATABASE = 'crypto_monitor'
+HOST = os.environ.get('DB_HOST')
+DATABASE = 'crypto_test'
 USER = 'postgres'
-PASSWORD = 'changeme'
+PASSWORD = 'postgres'
 
 max_price_1h_roll_window: float = 0
 
@@ -46,11 +47,12 @@ async def db_connect_create_if_not_exists(host, user, password, database,
                 host=host, user=user, password=password,
                 database=database, port=port,)
 
-    except (asyncpg.InvalidCatalogNameError,
+    except (asyncpg.exceptions.InvalidCatalogNameError,
             asyncpg.exceptions.ConnectionDoesNotExistError):
         # Database does not exist, create it.
         sys_conn = await asyncpg.connect(
-            database='template1',
+            host=host,
+            database='postgres',
             user='postgres',
             password=password,
         )
@@ -58,12 +60,11 @@ async def db_connect_create_if_not_exists(host, user, password, database,
             f'CREATE DATABASE "{database}" OWNER "{user}"'
         )
         await sys_conn.close()
-
         # Connect to the newly created database.
-        conn = await asyncpg.connect(
-                                    user=user,
-                                    database=database,
-                                    password=password)
+        conn = await asyncpg.connect(host=host,
+                                     user=user,
+                                     database=database,
+                                     password=password)
         await conn.execute('''
             CREATE TABLE crypto_monitor(
                 id serial PRIMARY KEY,
@@ -132,11 +133,15 @@ async def wait_low_price():
 
 
 async def main():
+    print('Ждём инициализацию БД в контейнере Docker...')
+
     await db_connect_create_if_not_exists(
                 host=HOST,
                 database=DATABASE,
                 user=USER,
                 password=PASSWORD)
+    # Ждём инициализацию БД в контейнере Docker
+    await asyncio.sleep(3)
     global db_pool
     db_pool = await make_db_pool()
 
