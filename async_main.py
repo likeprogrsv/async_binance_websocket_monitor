@@ -16,7 +16,7 @@ db_insert = '''
 HOST = 'localhost'
 DATABASE = 'crypto_test'
 USER = 'postgres'
-PASSWORD = 'likeprogdbpass'
+PASSWORD = 'changeme'
 
 
 async def connect_create_if_not_exists(host, user, password, database,
