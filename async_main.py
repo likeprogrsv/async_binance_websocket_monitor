@@ -20,8 +20,6 @@ db_max_price_1h = '''
                     WHERE time > current_timestamp - interval '1' hour
                   '''
 
-# С параметрами для БД через переменные среды почему-то
-# не захотело работать, поэтому пропишем руками ниже
 HOST = os.environ.get('DB_HOST')
 DATABASE = 'crypto_test'
 USER = 'postgres'
